@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <iostream>
 #include <new>
 #include <utility>
 
@@ -56,14 +57,20 @@ public:
 	}
 
 	void decrement() {
-		if(_count.fetch_sub(1, std::memory_order_acq_rel) > 1)
+		auto count = _count.fetch_sub(1, std::memory_order_acq_rel);
+		if(count > 1)
 			return;
-		
+		assert(count == 1);
+
+		// dispose() is allowed to destruct the counter itself;
+		// therefore we load _holder before calling it.
+		auto h = _holder;
+
 		dispose();
 
 		// We expect that this recursion is too shallow to be a problem.
-		if(_holder)
-			_holder->decrement();
+		if(h)
+			h->decrement();
 	}
 
 private:
@@ -243,6 +250,10 @@ struct shared_ptr : shared_ptr_access<T, H> {
 
 	T *get() const {
 		return _object;
+	}
+
+	counter *ctr() const {
+		return _ctr;
 	}
 
 private:
