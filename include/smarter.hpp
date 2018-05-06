@@ -46,14 +46,23 @@ public:
 		return _holder;
 	}
 
+	unsigned int check_count() {
+		return _count.load(std::memory_order_relaxed);
+	}
+
 	void increment() {
 		auto count = _count.fetch_add(1, std::memory_order_acq_rel);
 		assert(count);
 	}
 
 	bool increment_if_nonzero() {
-		assert(!"Implement this");
-		return false;
+		auto count = _count.load(std::memory_order_relaxed);
+		do {
+			if(!count)
+				return false;
+		} while(!_count.compare_exchange_strong(count, count + 1,
+					std::memory_order_acq_rel));
+		return true;
 	}
 
 	void decrement() {
@@ -203,7 +212,7 @@ struct shared_ptr : shared_ptr_access<T, H> {
 		std::swap(p._ctr, other._ctr);
 		return std::move(p);
 	}
-
+	
 	shared_ptr()
 	: _object{nullptr}, _ctr{nullptr} { }
 	
@@ -261,6 +270,13 @@ private:
 	counter *_ctr;
 };
 
+template<typename X, typename T, typename H>
+shared_ptr<X, H> static_pointer_cast(shared_ptr<T, H> other) {
+	auto [object, ctr] = other.release();
+	return shared_ptr<X, H>{adopt_rc, static_cast<X *>(object), ctr};
+}
+
+
 template<typename T, typename H = void>
 struct weak_ptr {
 	friend void swap(weak_ptr &x, weak_ptr &y) {
@@ -274,6 +290,14 @@ struct weak_ptr {
 	weak_ptr(const shared_ptr<T, H> &ptr)
 	: _object{ptr.get()}, _ctr{ptr.ctr()} {
 		assert(_ctr->holder());
+		_ctr->holder()->increment();
+	}
+
+	template<typename X>
+	weak_ptr(const shared_ptr<X, H> &ptr)
+	: _object{ptr.get()}, _ctr{ptr.ctr()} {
+		assert(_ctr->holder());
+		_ctr->holder()->increment();
 	}
 
 	weak_ptr(const weak_ptr &other)
@@ -296,12 +320,16 @@ struct weak_ptr {
 		}
 	}
 
-	shared_ptr<T, H> lock() {
+	weak_ptr &operator= (weak_ptr other) {
+		swap(*this, other);
+		return *this;
+	}
+
+	shared_ptr<T, H> lock() const {
 		if(!_ctr)
 			return shared_ptr<T, H>{};
 
-		assert(_ctr->holder());
-		if(!_ctr->holder()->increment_if_nonzero())
+		if(!_ctr->increment_if_nonzero())
 			return shared_ptr<T, H>{};
 		
 		return shared_ptr<T, H>{adopt_rc, _object, _ctr};
