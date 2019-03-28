@@ -2,10 +2,15 @@
 #define LIBSMARTER_SMARTER_HPP
 
 #include <atomic>
-#include <cassert>
-#include <iostream>
 #include <new>
 #include <utility>
+
+#if __STDC_HOSTED__
+	#include <cassert>
+	#include <iostream>
+#else
+	#define assert(c) do { } while(0)
+#endif
 
 namespace smarter {
 
@@ -252,10 +257,12 @@ struct shared_ptr : shared_ptr_access<T, H> {
 		return _object;
 	}
 
+#if __STDC_HOSTED__
 	std::pair<T *, counter *> release() {
 		return std::make_pair(std::exchange(_object, nullptr),
 				std::exchange(_ctr, nullptr));
 	}
+#endif
 
 	T *get() const {
 		return _object;
