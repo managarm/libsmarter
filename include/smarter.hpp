@@ -9,7 +9,9 @@
 	#include <cassert>
 	#include <iostream>
 #else
-	#define assert(c) do { } while(0)
+	#ifndef assert
+		#define assert(c) do { } while(0)
+	#endif
 #endif
 
 namespace smarter {
@@ -110,29 +112,44 @@ struct dispose_object { };
 
 template<typename T>
 struct box {
-	// TODO: Write constructor that makes _stor appear initialized to GCC (e.g. via inline asm)?
-
 	template<typename... Args>
 	void construct(Args &&... args) {
 		new (&_stor) T{std::forward<Args>(args)...};
 	}
 
 	T *get() {
-		return reinterpret_cast<T *>(&_stor);
+		return __builtin_launder(reinterpret_cast<T *>(&_stor));
 	}
 
 	void destruct() {
-		reinterpret_cast<T *>(&_stor)->~T();
+		get()->~T();
 	}
 
 private:
 	std::aligned_storage_t<sizeof(T), alignof(T)> _stor;
 };
 
-template<typename T>
+struct default_deallocator {
+	template<typename X>
+	void operator() (X *p) {
+		delete p;
+	}
+};
+
+template<typename A>
+struct allocator_deallocator {
+	template<typename X>
+	void operator() (X *p) {
+		A allocator;
+		p->~X();
+		allocator.deallocate(p, sizeof(X));
+	}
+};
+
+template<typename T, typename Deallocator = default_deallocator>
 struct meta_object
-: crtp_counter<meta_object<T>, dispose_memory>,
-		crtp_counter<meta_object<T>, dispose_object> {
+: crtp_counter<meta_object<T, Deallocator>, dispose_memory>,
+		crtp_counter<meta_object<T, Deallocator>, dispose_object> {
 	friend struct crtp_counter<meta_object, dispose_memory>;
 	friend struct crtp_counter<meta_object, dispose_object>;
 
@@ -144,6 +161,8 @@ struct meta_object
 				initial_count} {
 		_bx.construct(std::forward<Args>(args)...);
 	}
+
+	virtual ~meta_object() = default;
 
 	T *get() {
 		return _bx.get();
@@ -163,47 +182,40 @@ private:
 	}
 
 	void dispose(dispose_memory) {
-		delete this;
+		Deallocator d;
+		d(this);
 	}
 
 	box<T> _bx;
 };
 
-template<typename T, typename H = void, typename = void>
-struct borrowed_ptr {
-
-private:
-	T *_object;
-	counter *_ctr;
-};
-
-template<typename T, typename H>
+template<typename T, typename D>
 struct shared_ptr;
 
-template<typename T, typename H>
-struct shared_ptr_access {
+template<typename T, typename D>
+struct ptr_access_crtp {
 	T &operator* () const {
-		auto d = static_cast<const shared_ptr<T, H> *>(this);
-		return *d->_object;
+		auto d = static_cast<const D *>(this);
+		return *d->get();
 	}
 
 	T *operator-> () const {
-		auto d = static_cast<const shared_ptr<T, H> *>(this);
-		return d->_object;
+		auto d = static_cast<const D *>(this);
+		return d->get();
 	}
 };
 
-template<typename H>
-struct shared_ptr_access<void, H> {
+template<typename D>
+struct ptr_access_crtp<void, D> {
 	
 };
 
 template<typename T, typename H = void>
-struct shared_ptr : shared_ptr_access<T, H> {
+struct shared_ptr : ptr_access_crtp<T, shared_ptr<T, H>> {
 	template<typename T_, typename H_>
 	friend struct shared_ptr;
 	
-	friend struct shared_ptr_access<T, H>;
+	friend struct ptr_access_crtp<T, shared_ptr>;
 
 	friend void swap(shared_ptr &x, shared_ptr &y) {
 		std::swap(x._object, y._object);
@@ -242,6 +254,14 @@ struct shared_ptr : shared_ptr_access<T, H> {
 	shared_ptr(shared_ptr<X, H> other)
 	: _object{std::exchange(other._object, nullptr)},
 			_ctr{std::exchange(other._ctr, nullptr)} { }
+
+	// Aliasing constructor.
+	template<typename X>
+	shared_ptr(const shared_ptr<X, H> &other, T *object)
+	: _object{object}, _ctr{other._ctr} {
+		if(_ctr)
+			_ctr->increment();
+	}
 	
 	~shared_ptr() {
 		if(_ctr)
@@ -262,6 +282,11 @@ struct shared_ptr : shared_ptr_access<T, H> {
 		return std::make_pair(std::exchange(_object, nullptr),
 				std::exchange(_ctr, nullptr));
 	}
+#else
+	void release() {
+		_object = nullptr;
+		_ctr = nullptr;
+	}
 #endif
 
 	T *get() const {
@@ -279,10 +304,59 @@ private:
 
 template<typename X, typename T, typename H>
 shared_ptr<X, H> static_pointer_cast(shared_ptr<T, H> other) {
-	auto [object, ctr] = other.release();
-	return shared_ptr<X, H>{adopt_rc, static_cast<X *>(object), ctr};
+	auto ptr = shared_ptr<X, H>{adopt_rc, static_cast<X *>(other.get()), other.ctr()};
+	other.release();
+	return std::move(ptr);
 }
 
+template<typename T, typename H = void>
+struct borrowed_ptr : ptr_access_crtp<T, borrowed_ptr<T, H>> {
+	template<typename T_, typename H_>
+	friend struct borrowed_ptr;
+
+	borrowed_ptr()
+	: _object{nullptr}, _ctr{nullptr} { }
+
+	borrowed_ptr(std::nullptr_t)
+	: _object{nullptr}, _ctr{nullptr} { }
+
+	borrowed_ptr(T *object, counter *ctr)
+	: _object{object}, _ctr{ctr} { }
+
+	template<typename X>//, typename = std::enable_if_t<std::is_base_of_v<X, T>>>
+	borrowed_ptr(borrowed_ptr<X, H> other)
+	: _object{other._object}, _ctr{other._ctr} { }
+
+	// Construction from shared_ptr.
+	// TODO: enable_if X * is convertible to T *.
+	template<typename X>
+	borrowed_ptr(const shared_ptr<X, H> &other)
+	: _object{other.get()}, _ctr{other.ctr()} { }
+
+	T *get() const {
+		return _object;
+	}
+
+	counter *ctr() const {
+		return _ctr;
+	}
+
+	shared_ptr<T, H> lock() const {
+		if(!_ctr)
+			return shared_ptr<T, H>{};
+		_ctr->increment();
+		return shared_ptr<T, H>{adopt_rc, _object, _ctr};
+	}
+
+private:
+	T *_object;
+	counter *_ctr;
+};
+
+template<typename X, typename T, typename H>
+borrowed_ptr<X, H> static_pointer_cast(borrowed_ptr<T, H> other) {
+	return borrowed_ptr<X, H>{static_cast<X *>(other.get()), other.ctr()};
+}
 
 template<typename T, typename H = void>
 struct weak_ptr {
@@ -350,6 +424,14 @@ private:
 template<typename T, typename... Args>
 shared_ptr<T> make_shared(Args &&... args) {
 	auto meta = new meta_object<T>{1, std::forward<Args>(args)...};
+	return shared_ptr<T>{adopt_rc, meta->get(), meta->object_ctr()};
+}
+
+template<typename T, typename Allocator, typename... Args>
+shared_ptr<T> allocate_shared(Allocator alloc, Args &&... args) {
+	using meta_type = meta_object<T, allocator_deallocator<Allocator>>;
+	auto memory = alloc.allocate(sizeof(meta_type));
+	auto meta = new (memory) meta_type{1, std::forward<Args>(args)...};
 	return shared_ptr<T>{adopt_rc, meta->get(), meta->object_ctr()};
 }
 
