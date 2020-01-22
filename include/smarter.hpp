@@ -35,11 +35,11 @@ public:
 
 	counter &operator= (const counter &) = delete;
 
+protected:
 	~counter() {
 		assert(!_count.load(std::memory_order_relaxed));
 	}
 
-protected:
 	virtual void dispose() = 0;
 
 public:
@@ -122,7 +122,7 @@ struct box {
 	}
 
 	void destruct() {
-		get()->~T();
+		get()->T::~T();
 	}
 
 private:
@@ -148,8 +148,8 @@ struct allocator_deallocator {
 
 template<typename T, typename Deallocator = default_deallocator>
 struct meta_object
-: crtp_counter<meta_object<T, Deallocator>, dispose_memory>,
-		crtp_counter<meta_object<T, Deallocator>, dispose_object> {
+: private crtp_counter<meta_object<T, Deallocator>, dispose_memory>,
+		private crtp_counter<meta_object<T, Deallocator>, dispose_object> {
 	friend struct crtp_counter<meta_object, dispose_memory>;
 	friend struct crtp_counter<meta_object, dispose_object>;
 
@@ -177,6 +177,10 @@ struct meta_object
 	}
 
 private:
+	// Suppress Clang's warning about hidden virtual functions.
+	using crtp_counter<meta_object, dispose_object>::dispose;
+	using crtp_counter<meta_object, dispose_memory>::dispose;
+
 	void dispose(dispose_object) {
 		_bx.destruct();
 	}
