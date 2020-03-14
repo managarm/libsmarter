@@ -138,15 +138,21 @@ struct default_deallocator {
 
 template<typename A>
 struct allocator_deallocator {
+	allocator_deallocator(A allocator)
+	: allocator_{std::move(allocator)} { }
+
 	template<typename X>
 	void operator() (X *p) {
-		A allocator;
+		A allocator = std::move(allocator_);
 		p->~X();
 		allocator.deallocate(p, sizeof(X));
 	}
+
+private:
+	A allocator_;
 };
 
-template<typename T, typename Deallocator = default_deallocator>
+template<typename T, typename Deallocator>
 struct meta_object
 : private crtp_counter<meta_object<T, Deallocator>, dispose_memory>,
 		private crtp_counter<meta_object<T, Deallocator>, dispose_object> {
@@ -154,11 +160,12 @@ struct meta_object
 	friend struct crtp_counter<meta_object, dispose_object>;
 
 	template<typename... Args>
-	meta_object(unsigned int initial_count, Args &&... args)
+	meta_object(unsigned int initial_count, Deallocator d, Args &&... args)
 	: crtp_counter<meta_object, dispose_memory>{adopt_rc, nullptr, 1},
 			crtp_counter<meta_object, dispose_object>{adopt_rc,
 				static_cast<crtp_counter<meta_object, dispose_memory> *>(this),
-				initial_count} {
+				initial_count},
+			_d{std::move(d)} {
 		_bx.construct(std::forward<Args>(args)...);
 	}
 
@@ -186,11 +193,11 @@ private:
 	}
 
 	void dispose(dispose_memory) {
-		Deallocator d;
-		d(this);
+		_d(this);
 	}
 
 	box<T> _bx;
+	Deallocator _d;
 };
 
 template<typename T, typename D>
@@ -427,7 +434,8 @@ private:
 
 template<typename T, typename... Args>
 shared_ptr<T> make_shared(Args &&... args) {
-	auto meta = new meta_object<T>{1, std::forward<Args>(args)...};
+	auto meta = new meta_object<T, default_deallocator>{1,
+			default_deallocator{}, std::forward<Args>(args)...};
 	return shared_ptr<T>{adopt_rc, meta->get(), meta->object_ctr()};
 }
 
@@ -435,7 +443,8 @@ template<typename T, typename Allocator, typename... Args>
 shared_ptr<T> allocate_shared(Allocator alloc, Args &&... args) {
 	using meta_type = meta_object<T, allocator_deallocator<Allocator>>;
 	auto memory = alloc.allocate(sizeof(meta_type));
-	auto meta = new (memory) meta_type{1, std::forward<Args>(args)...};
+	auto meta = new (memory) meta_type{1,
+			allocator_deallocator<Allocator>{alloc}, std::forward<Args>(args)...};
 	return shared_ptr<T>{adopt_rc, meta->get(), meta->object_ctr()};
 }
 
