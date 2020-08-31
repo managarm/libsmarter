@@ -114,7 +114,7 @@ template<typename T>
 struct box {
 	template<typename... Args>
 	void construct(Args &&... args) {
-		new (&_stor) T{std::forward<Args>(args)...};
+		new (&_stor) T(std::forward<Args>(args)...);
 	}
 
 	T *get() {
@@ -232,7 +232,7 @@ struct shared_ptr : ptr_access_crtp<T, shared_ptr<T, H>> {
 		std::swap(x._object, y._object);
 		std::swap(x._ctr, y._ctr);
 	}
-	
+
 	template<typename L>
 	friend shared_ptr handle_cast(shared_ptr<T, L> other) {
 		shared_ptr p;
@@ -240,10 +240,10 @@ struct shared_ptr : ptr_access_crtp<T, shared_ptr<T, H>> {
 		std::swap(p._ctr, other._ctr);
 		return std::move(p);
 	}
-	
+
 	shared_ptr()
 	: _object{nullptr}, _ctr{nullptr} { }
-	
+
 	shared_ptr(std::nullptr_t)
 	: _object{nullptr}, _ctr{nullptr} { }
 
@@ -260,7 +260,7 @@ struct shared_ptr : ptr_access_crtp<T, shared_ptr<T, H>> {
 	: shared_ptr{} {
 		swap(*this, other);
 	}
-	
+
 	template<typename X>//, typename = std::enable_if_t<std::is_base_of_v<X, T>>>
 	shared_ptr(shared_ptr<X, H> other)
 	: _object{std::exchange(other._object, nullptr)},
@@ -273,7 +273,7 @@ struct shared_ptr : ptr_access_crtp<T, shared_ptr<T, H>> {
 		if(_ctr)
 			_ctr->increment();
 	}
-	
+
 	~shared_ptr() {
 		if(_ctr)
 			_ctr->decrement();
@@ -350,6 +350,10 @@ struct borrowed_ptr : ptr_access_crtp<T, borrowed_ptr<T, H>> {
 
 	counter *ctr() const {
 		return _ctr;
+	}
+
+	operator bool () const {
+		return _object;
 	}
 
 	shared_ptr<T, H> lock() const {
