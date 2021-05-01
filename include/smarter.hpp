@@ -4,6 +4,9 @@
 #include <atomic>
 #include <new>
 #include <utility>
+#include <cstddef>
+
+#include <frg/manual_box.hpp>
 
 #if __STDC_HOSTED__
 	#include <cassert>
@@ -110,25 +113,6 @@ struct crtp_counter : counter {
 struct dispose_memory { };
 struct dispose_object { };
 
-template<typename T>
-struct box {
-	template<typename... Args>
-	void construct(Args &&... args) {
-		new (&_stor) T(std::forward<Args>(args)...);
-	}
-
-	T *get() {
-		return __builtin_launder(reinterpret_cast<T *>(&_stor));
-	}
-
-	void destruct() {
-		get()->T::~T();
-	}
-
-private:
-	std::aligned_storage_t<sizeof(T), alignof(T)> _stor;
-};
-
 struct default_deallocator {
 	template<typename X>
 	void operator() (X *p) {
@@ -166,7 +150,7 @@ struct meta_object
 				static_cast<crtp_counter<meta_object, dispose_memory> *>(this),
 				initial_count},
 			_d{std::move(d)} {
-		_bx.construct(std::forward<Args>(args)...);
+		_bx.initialize(std::forward<Args>(args)...);
 	}
 
 	virtual ~meta_object() = default;
@@ -196,7 +180,7 @@ private:
 		_d(this);
 	}
 
-	box<T> _bx;
+	frg::manual_box<T> _bx;
 	Deallocator _d;
 };
 
