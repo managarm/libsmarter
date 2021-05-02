@@ -108,6 +108,9 @@ struct crtp_counter : counter {
 		auto d = static_cast<D *>(this);
 		d->dispose(A{});
 	}
+
+protected:
+	~crtp_counter() = default;
 };
 
 struct dispose_memory { };
@@ -137,7 +140,7 @@ private:
 };
 
 template<typename T, typename Deallocator>
-struct meta_object
+struct meta_object final
 : private crtp_counter<meta_object<T, Deallocator>, dispose_memory>,
 		private crtp_counter<meta_object<T, Deallocator>, dispose_object> {
 	friend struct crtp_counter<meta_object, dispose_memory>;
