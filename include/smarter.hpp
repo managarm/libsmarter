@@ -8,12 +8,19 @@
 
 #include <frg/manual_box.hpp>
 
-#if __STDC_HOSTED__
+// Allow the user to override __STDC_HOSTED__. This is useful when building mlibc.
+#if __STDC_HOSTED__ && !defined(LIBSMARTER_FORCE_FREESTANDING)
+	#define LIBSMARTER_HOSTED 1
+#else
+	#define LIBSMARTER_HOSTED 0
+#endif
+
+#if LIBSMARTER_HOSTED
 	#include <cassert>
 	#include <iostream>
 #else
 	#ifndef assert
-		#define assert(c) do { } while(0)
+		#define assert(c) do { (void)(c); } while(0)
 	#endif
 #endif
 
@@ -275,7 +282,7 @@ struct shared_ptr : ptr_access_crtp<T, shared_ptr<T, H>> {
 		return _object;
 	}
 
-#if __STDC_HOSTED__
+#if LIBSMARTER_HOSTED
 	std::pair<T *, counter *> release() {
 		return std::make_pair(std::exchange(_object, nullptr),
 				std::exchange(_ctr, nullptr));
