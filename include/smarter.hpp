@@ -391,7 +391,7 @@ struct weak_ptr {
 	}
 
 	weak_ptr(const weak_ptr &other)
-	: _object{other.object}, _ctr{other.ctr} {
+	: _object{other._object}, _ctr{other._ctr} {
 		if(_ctr) {
 			assert(_ctr->holder());
 			_ctr->holder()->increment();
