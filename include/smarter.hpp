@@ -278,7 +278,7 @@ struct shared_ptr : ptr_access_crtp<T, shared_ptr<T, H>> {
 		return *this;
 	}
 
-	operator bool () const {
+	explicit operator bool () const {
 		return _object;
 	}
 
@@ -346,7 +346,7 @@ struct borrowed_ptr : ptr_access_crtp<T, borrowed_ptr<T, H>> {
 		return _ctr;
 	}
 
-	operator bool () const {
+	explicit operator bool () const {
 		return _object;
 	}
 
