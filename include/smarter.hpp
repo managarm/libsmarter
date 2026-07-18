@@ -6,6 +6,7 @@
 #include <utility>
 #include <cstddef>
 
+#include <frg/container_of.hpp>
 #include <frg/manual_box.hpp>
 
 // Allow the user to override __STDC_HOSTED__. This is useful when building mlibc.
@@ -111,6 +112,16 @@ struct meta_object_base {
 	counter &weak_ctr() { return _weak_ctr; }
 	void finalize() { _finalize(this); }
 	void finalize_weak() { _finalize_weak(this); }
+
+	// Recover the meta_object_base from a pointer to its counter as returned by ctr().
+	static meta_object_base *from_ctr(counter *ctr) {
+		return frg::container_of(ctr, &meta_object_base::_ctr);
+	}
+
+	// Recover the meta_object_base from a pointer to its counter as returned by weak_ctr().
+	static meta_object_base *from_weak_ctr(counter *ctr) {
+		return frg::container_of(ctr, &meta_object_base::_weak_ctr);
+	}
 
 private:
 	counter _ctr;
