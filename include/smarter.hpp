@@ -55,6 +55,10 @@ public:
 		return _count.load(std::memory_order_relaxed);
 	}
 
+	std::atomic<unsigned int> &raw() {
+		return _count;
+	}
+
 	void increment() {
 		auto count = _count.fetch_add(1, std::memory_order_acq_rel);
 		assert(count);
